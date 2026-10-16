@@ -38,7 +38,7 @@ Warnings worth fixing before publishing: entry not at the zip root, SDK not load
 ## Develop
 
 ### `create_app` — scope `develop`
-`{"name": "…", "description": "…", "category": "…"}` (name required). Returns the full app row (`visibility: "draft"`, `has_bundle: false`) plus `next` (what to do). The slug is assigned here and never changes.
+`{"name": "…", "description": "…", "category": "…"}` (name required). Returns the full app row (`visibility: "draft"`, `has_bundle: false`) plus `next` (what to do). The slug is assigned by the platform here and never changes; there is no way to choose one.
 
 ### `update_app` — scope `develop`; `visibility` also needs `publish`
 ```json

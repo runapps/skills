@@ -17,7 +17,7 @@ The authoritative, always-current version is `https://www.runapps.ai/agent/setup
 2. **Poll**: `POST https://www.runapps.ai/api/agent/device/token` with `{"device_code": "…"}` every `interval` seconds. `status` is `pending` (wait), `slow_down` (back off), `denied` / `expired` (stop and tell the user) or `approved`, which returns `api_key` (`rk_…`), `key_prefix`, `scopes` and `mcp_url` — **once**. Write it into your MCP configuration immediately; never into the conversation, logs or a repository.
 3. **Connect**: MCP Streamable HTTP at `https://www.runapps.ai/api/mcp` with header `Authorization: Bearer <api_key>`. Claude Code: `claude mcp add --transport http runapps "https://www.runapps.ai/api/mcp" --header "Authorization: Bearer <api_key>"`. Codex: `[mcp_servers.runapps] url = "https://www.runapps.ai/api/mcp"`, `http_headers = { Authorization = "Bearer <api_key>" }`. Other clients: the same URL and header. Then `tools/list`; the `instructions` from `initialize` give the recommended workflow.
 
-Scopes: `read`, `develop`, `publish`, `gateway` are granted by default; `danger` (delete / unpublish) is never included unless you ask for it explicitly and tell the user why. The user can untick scopes on the approval page and revoke the key later at `https://www.runapps.ai/dashboard/api`. A tool called without its scope answers with an error naming the scope: ask the user to authorize again, do not work around it.
+Scopes: `read`, `develop`, `publish`, `gateway` are granted by default; `danger` (delete / unpublish) is never included unless you ask for it explicitly and tell the user why. The user can untick scopes on the approval page, and later rename the key, change its scopes or revoke it at `https://www.runapps.ai/dashboard/api` (a scope change applies to your next call, no new key needed). A tool called without its scope answers with an error naming the scope: ask the user to authorize again, do not work around it.
 
 The same key works at the gateway (`https://www.runapps.ai/v1`, OpenAI-compatible, `Authorization: Bearer rk_…`) when it has the `gateway` scope — for testing the app you build; each call is billed to the user. To disconnect for good, call `revoke_my_key` with `confirm: true`.
 
@@ -25,7 +25,7 @@ The same key works at the gateway (`https://www.runapps.ai/v1`, OpenAI-compatibl
 
 | Object | What it is | How you reach it |
 |---|---|---|
-| App (project) | A published bundle with a `slug`, name, one-line description, Markdown long description, category, icon, visibility and creator fee (`rebate_rate`). Created as a **draft** with no bundle, so the slug exists before any code does. | `list_apps`, `get_app`, `create_app`, `update_app` |
+| App (project) | A published bundle with a platform-assigned `slug`, name, one-line description, Markdown long description, category, icon, visibility and creator fee (`rebate_rate`). Created as a **draft** with no bundle, so the slug exists before any code does. | `list_apps`, `get_app`, `create_app`, `update_app` |
 | Bundle | The zip of the app's build. Stored whole; files are served out of it on `https://<slug>.runapps.dev`. Dot files (`.private/…`) are never served; `index.html` at the zip root is the default entry. | `upload_bundle` (+ `PUT`), `upload_bundle_base64`, `check_bundle` |
 | Visibility | `draft` (only the creator) → `private` (unlisted: anyone with the link, no review) or `public` (in the library; the **first** move to public is reviewed and shows as `pending`, later updates are live at once; a rejection carries a `review_note`). | `update_app` with `visibility`, `get_review` |
 | User & sign-in | Users sign in with their RunApps account inside the app (the SDK does it; `new RunApps()` with no key). Each user pays their own model usage plus the creator fee. The app never holds a key. | SDK (`references/sdk.md`) |
@@ -38,7 +38,7 @@ Categories: Creative, Content, Productivity, Marketing, Engineering, Design, Res
 
 ## Workflow
 
-1. **Create**: `create_app` with `name` (and `description`, `category`). The result has `slug` and `url`. Tell the user the slug.
+1. **Create**: `create_app` with `name` (and `description`, `category`). The result has `slug` (`proj-xxxxxxxx`, assigned by the platform and never chosen by you or the user; an admin may later give a listed app a readable one) and `url`. Tell the user the slug.
 2. **Develop locally** against the slug (`references/sdk.md`, "Build an app"):
    ```html
    <script src="https://www.runapps.ai/sdk/latest.js"></script>
