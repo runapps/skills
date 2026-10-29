@@ -1,13 +1,13 @@
 ---
 name: runapps
-description: "Build and publish AI web apps on RunApps (runapps.ai) through its MCP tools, and write the app code with the RunApps JavaScript SDK (@runappsai/sdk). Covers getting authorized and connected (device-code flow, agent key, Bearer header, scopes), the platform model (apps, slugs, bundles, visibility and review, creator fee), every MCP tool, the SDK (sign-in, chat, images, audio, video, per-user files, IndexedDB sync, private prompts), the bundle rules (zip layout, dot files, entry page) and the safety rules. Use whenever the runapps MCP server is connected, or when a task mentions RunApps, runapps.dev, publishing an app there, the RunApps SDK, or an rk_ key."
+description: "Build and publish AI web apps on RunApps (runapps.ai) through its MCP tools, and write the app code with the RunApps JavaScript SDK (@runappsai/sdk). Covers getting authorized and connected (device-code flow, agent key, Bearer header, scopes), the platform model (apps, slugs, bundles, visibility and review, creator fee), every MCP tool, the SDK (sign-in, chat, agents with tools, skills and a JS sandbox, images, audio, video, per-user files, IndexedDB sync, private prompts), the bundle rules (zip layout, dot files, entry page) and the safety rules. Use whenever the runapps MCP server is connected, or when a task mentions RunApps, runapps.dev, publishing an app there, the RunApps SDK, or an rk_ key."
 license: MIT
 ---
 # RunApps via MCP
 
 RunApps (https://www.runapps.ai) publishes **AI web apps**: a creator uploads a static frontend bundle (zip), it is served on its own `https://<slug>.runapps.dev`, users sign in with one RunApps account and pay for their own model usage, and the creator earns a fee on every call. Everything below is done through the `runapps` MCP server and the SDK. Not connected yet? See "Connecting".
 
-This file is the entry point: connecting, the platform model, the tool catalogue, the workflow and the rules. The SDK (how the app code talks to models and files) is `references/sdk.md`; exact tool parameters are `references/tools.md`. Read only what the task needs.
+This file is the entry point: connecting, the platform model, the tool catalogue, the workflow and the rules. The SDK (how the app code talks to models and files, and `client.agent()` — the tool-calling loop with skills, a workspace and a sandbox) is `references/sdk.md`; exact tool parameters are `references/tools.md`. Read only what the task needs.
 
 ## Connecting (authorization)
 

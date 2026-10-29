@@ -9,7 +9,7 @@ There are two ways to use it:
 
 Both use the base URL `https://www.runapps.ai` and the same OpenAI-compatible API under `/v1`.
 
-**Contents:** [Install](#install) · [Build an app](#build-an-app) · [Publish it](#publish-it) · [From your own code](#from-your-own-code) · [Chat](#chat) · [Files](#files) · [Models](#models) · [Image, audio, video, embeddings](#image-audio-video-embeddings) · [HTTP API](#http-api) · [Errors](#errors) · [Reference](#reference)
+**Contents:** [Install](#install) · [Build an app](#build-an-app) · [Publish it](#publish-it) · [From your own code](#from-your-own-code) · [Chat](#chat) · [Agents](#agents) · [Files](#files) · [Models](#models) · [Image, audio, video, embeddings](#image-audio-video-embeddings) · [HTTP API](#http-api) · [Errors](#errors) · [Reference](#reference)
 
 ---
 
@@ -265,6 +265,68 @@ for (const t of resp.usage.tool_costs ?? []) console.log(t.name, t.count, t.cost
 
 The tokens of every round and each tool call are billed together, and `usage.total_cost` includes both. Server tools combine with your own `tools`; if the model calls one of yours, the loop stops and the call is returned to you. With `stream: true` the tool rounds run silently and the final answer streams.
 
+## Agents
+
+`client.agent()` runs the model ↔ tool loop for you: it streams the reply, re-assembles tool calls, checks their arguments against your schema, asks the user before destructive steps, runs the tools, feeds the results back and repeats until the model answers. Your app provides what is its own — tools, a workspace of files and skills, and (optionally) its dialogs.
+
+```ts
+import { defineTool } from "@runappsai/sdk";
+
+const addTodo = defineTool({
+  name: "add_todo",
+  description: "Add an item to the user's todo list.",
+  parameters: {
+    type: "object",
+    properties: { text: { type: "string" }, due: { type: "string", description: "YYYY-MM-DD" } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  execute: async ({ text, due }) => { await db.todos.add({ text, due }); return `Added "${text}".`; },
+});
+
+const workspace = await client.workspace({ skills: "/skills.zip" });   // see Skills below
+const agent = client.agent({
+  model: "Claude Sonnet 4.6",            // the platform default when omitted
+  appName: "Todos",
+  instructions: "You manage the user's todo list.",
+  tools: [addTodo],
+  workspace,
+});
+
+agent.on("text_delta", (e) => bubble.textContent = e.text);
+agent.on("tool_start", (e) => log(`${e.name}…`));
+agent.on("tool_end", (e) => log(`${e.name}: ${e.status}`));
+
+const result = await agent.prompt("Add 'ship v2' for next Friday and show me what is due this week");
+console.log(result.reason, result.text, result.usage.total_cost);
+```
+
+**The loop.** One `prompt()` is a run. Each turn is a model call followed by its tool calls, run one after another (`parallelTools: true` runs them at once), until the model replies without tools, `maxTurns` (default 20) is reached, or the run is stopped. Steer a running agent with `agent.steer(text)` (lands after the current tool batch) or queue a message with `agent.followUp(text)`; `agent.abort()` stops it, giving pending tool calls a "skipped" result so the conversation stays valid. A tool that throws returns its message to the model as an error; the model fixes the call or explains. Repeated identical tool batches are warned about and then stopped. `message_end` carries `truncated: true` when the reply hit `maxTokens`.
+
+**Tools.** `defineTool({ name, description, parameters, execute })` — `parameters` is a JSON Schema (close objects with `additionalProperties: false` and list `required`): the model's arguments are checked against it and a mismatch goes back to the model as a readable error. `execute(args, ctx)` returns a string, content parts (an image), any JSON value, or `{ content, details }` (only `content` reaches the model). `ctx` has `signal`, `ui`, `workspace`, `agent` and `update(text)` for progress. Mark a tool `destructive: true`, or give it `confirm: (args) => "Delete 3 files?"`, and the agent asks the user first under `permissions: "ask"` (the default); `"auto"` never asks and a function decides per call. `onToolCall` can block any call. `guidelines` adds a sentence to the system prompt.
+
+**Built-in tools.** `ask_user` lets the model put one to three questions to the user, with options or free text, when a request is ambiguous. `run_js` runs JavaScript the model writes in a Worker — no DOM, no network, a captured console, and `fs` bound to the workspace — so it computes, parses and transforms data instead of guessing, and can run a skill's scripts. Both are on by default (`askUser: false`, `sandbox: false` to remove; `sandbox: { timeoutMs, network }` to configure). With a workspace: `list_files`, `read_file`, `write_file`, `edit_file` (exact old → new replacement), `delete_file` (asks), `search_files`; choose a subset with `fileTools: ["read_file", "list_files"]`.
+
+**Workspace and skills.** `client.workspace({ skills, id })` is a virtual file tree kept in IndexedDB, one per app and `id` (default `"default"`; a different id is a separate tree, the same id continues across reloads and tabs). `skills` names one or more zips — a path in your bundle (`/skills.zip`), a file in the user's RunApps storage (`files:packs/design.zip`) or any URL — unpacked under `/skills` and re-fetched only when the server's ETag changes. A skill is a folder with a `SKILL.md`:
+
+```markdown
+---
+name: unit-convert
+description: Convert between units with exact factors. Use whenever the user asks to convert a quantity.
+---
+1. Read `references/factors.md` for the factor.
+2. Run `scripts/convert.js` with run_js (fs.read it, pass `input = { value, factor }`).
+3. Answer with the result and the factor used.
+```
+
+The system prompt lists every skill's name and description; the model reads the body with `read_file` when a task matches — the same way pi and Claude Code load skills. `disable-model-invocation: true` hides a skill from the model; `agent.useSkill(name)` loads one for the next prompt. Mount your own files with `workspace.mount("/doc", fs)`, where `fs` implements `AgentFS` (`list`, `read`, optional `write`/`delete`) — the app's document becomes files the model can read and edit; `memoryFS()` is a ready-made one. `/skills` is read-only; everything else the model writes persists.
+
+**Dialogs.** The agent's `confirm`, `select`, `input` and `notify` come from `domUI()`: plain `<dialog>`s that follow the page's language and colour scheme. Pass your own object implementing `AgentUI` to use the app's design.
+
+**Context.** The transcript is kept under the model's window (from the catalogue; `maxInputTokens` overrides): old tool results are elided first, then the oldest turns dropped whole (`keepTurns`, default 4, stay intact) — a `compaction` event says so. `agent.export()` is a JSON snapshot; `client.agent({ restore })` continues it. `agent.usage.total_cost` sums the gateway's `total_cost` of every call (before the platform's markup and your app's fee). A private prompt (`prompt: { id, vars }`) is forwarded on every request and `extra` carries any other chat parameter.
+
+**Structured answers without an agent.** `client.chat.structured(params, schema)` asks with `response_format: json_schema` and returns the parsed value, also when a model wraps it in a code fence; `parseJSONLoose(text)` is the parser on its own.
+
 ## Files
 
 Each app has a file space for each signed-in user. Paths look like POSIX paths, and every file has a public `url` you can use in `<img src>`.
@@ -329,6 +391,70 @@ try {
 
 Paths are at most 900 bytes, and a single file is at most 200 MB.
 
+## Sending files to another app
+
+An app can send files to another app on the platform — a canvas sends a clip to a video editor, the editor sends its export on to the canvas or to any other app. Sending is one way, and each app treats what it receives its own way. The apps never share storage: the files travel as links, and the receiving app copies them into its own.
+
+**Say what your app takes.** In `bundle.json` at the root of your zip:
+
+```json
+{ "receives": [
+    { "types": ["video/*"], "action": "edit" },
+    { "types": ["audio/*", "image/*"], "action": "open" } ] }
+```
+
+`types` are MIME types or `type/*`. `action` is how senders word it: `edit` ("Edit in …") or `open` ("Open in …"). The platform reads this when you upload the bundle; the publish page shows what it found.
+
+**Sending.** List the apps that take a file, then send it from a click (it opens a new tab):
+
+```js
+const apps = await client.apps.receivers({ type: "video/mp4" });
+// [{ slug, name, icon_url, url, actions: ["edit", "open"] }]
+
+button.onclick = () => client.apps.send(apps[0].slug, {
+  files: [{ path: "clips/intro.mp4" }],   // or { blob, name } or { url, name }
+});
+```
+
+If the other app is already open in a tab, that tab takes the files and the new tab says so; otherwise the new tab becomes the app.
+
+Links to paths are signed for 7 days. A `blob` has no link of its own, so it is first stored in your app's files under `handoff/<id>/`; the SDK deletes those once their link has expired (checked at most once a day while your app is open).
+
+**A "Send to…" in the same place in every app.** Rather than building the menu yourself:
+
+```js
+// A button (hidden while no app takes the type) that opens a menu of the apps that do.
+exportPanel.append(client.apps.sendButton({ type: "audio/wav", files: [{ blob, name: "mix.wav" }] }));
+
+// After a file is saved somewhere the user doesn't see it (their storage), a corner card
+// "Exported mix.wav · Send to… · ×" — the same card watchDownloads() shows after every download.
+client.apps.offer(blob, "mix.wav");
+client.apps.watchDownloads();
+```
+
+**Receiving.** Nothing is taken without asking. With `confirm: true` the SDK asks the user first ("Video Studio sent you 1 file — Receive / Later / Ignore") and runs your handler only on Receive:
+
+```js
+client.apps.onReceive(async (h) => {
+  // h.from, h.action, h.files: [{ url, name, type, size }]
+  const obj = await h.importTo("received/" + h.files[0].name);  // server-side copy
+  addToDocument(obj);
+}, { confirm: true });
+```
+
+Or ask in your own UI, in the place it belongs, and answer from the handler: `"later"` (the user put it off — offered again the next time the app starts) or `"pass"` (not here, e.g. no document open in this tab — another open tab may take it). Anything else means taken.
+
+```js
+client.apps.onReceive(async (h) => {
+  if (!editorOpen) return "pass";
+  const choice = await myDialog(h);          // "add" | "later" | "ignore"
+  if (choice === "later") return "later";
+  if (choice === "add") await addToDocument(h);
+});
+```
+
+Each handoff reaches one tab at a time, even when your app is open in several. `client.apps.waiting()` lists what is waiting without taking it — check it at start to skip a start screen when the app was opened to receive files — and `client.apps.dismiss(id)` drops one.
+
 ## Sync
 
 RunApps Sync keeps the data an app stores in IndexedDB on every device the user signs in on, with no code for it. The SDK observes the databases the app opens, pushes committed writes a few seconds later, pulls other devices' changes whenever the page is opened, focused or comes back online, and shows the state on the badge. It is **on by default** in an app on RunApps (browser sign-in mode) and off for personal keys and Node.
@@ -369,7 +495,7 @@ const tts = await client.models.default("text_to_speech");
 const pick = defaultModel(video, "video_generation");        // same, from a list you already have
 ```
 
-`client.models.list()` and `GET /v1/models` need no key or sign-in, so an app can show its model choices before the user signs in. Leave `model` out of a request and the gateway uses the user's own preferred model, else this default; `is_default` tells an app which one that is, so it can preselect it. Token prices are in pips per million tokens, where 1 USD is 1,000,000 pips. Each model carries `capability_tags`, such as `t2v`, `i2v`, `voice_clone` or `timestamps`; filter with `hasCapabilityTag`. Chat models list `input_modalities`; check with `acceptsModality`. Every model describes its accepted options through `getOptionsSchema(model)`: fields, bounds, enums, cross-field rules, and a catalogue of voices or emotions. `validateRequest(schema, body)` returns every problem at once for a form to show. Live prices are also on the [pricing page](https://www.runapps.ai/pricing).
+`client.models.list()` and `GET /v1/models` need no key or sign-in, so an app can show its model choices before the user signs in. Leave `model` out of a request and the gateway uses the user's own preferred model, else this default; `is_default` tells an app which one that is, so it can preselect it. Prices are in pips, where 1 USD is 10,000 pips: token prices per million tokens, `fixed_cost` per image, second or call. A video model priced by resolution (Seedance) also lists `fixed_cost_by_resolution`, a second at each resolution; 1080p costs about 2.5× 720p. Each model carries `capability_tags`, such as `t2v`, `i2v`, `voice_clone` or `timestamps`; filter with `hasCapabilityTag`. Chat models list `input_modalities`; check with `acceptsModality`. Every model describes its accepted options through `getOptionsSchema(model)`: fields, bounds, enums, cross-field rules, and a catalogue of voices or emotions. `validateRequest(schema, body)` returns every problem at once for a form to show. Live prices are also on the [pricing page](https://www.runapps.ai/pricing).
 
 ## Image, audio, video, embeddings
 
@@ -383,13 +509,21 @@ const img = await client.image.generate("MiniMax Image-01", {
 await client.image.edit("GPT Image", { image: { data: bytes, filename: "photo.png" }, prompt: "add a party hat" });
 // generateAsync, or submitGenerate + getAsyncStatus, for jobs longer than about 100 s
 
+// Upscale (tag "upscale"): no prompt; variant and scale pick the model and size.
+const hd = await client.image.generateAsync("Topaz Upscale", {
+  source_image_url: url,                      // https:// or data: URI; JPEG, PNG or TIFF
+  variant: "standard",                        // low_resolution | cgi | high_fidelity | text_refine
+  scale: 2,                                   // 1 | 2 | 4 | 6; a PNG stays PNG with its transparency
+});
+
 // Speech.
 const speech = await client.audio.speech("MiniMax Speech 2.6 HD", { input: "Hello", voice: "English_radiant_girl", emotion: "happy" });
 const text = await client.audio.transcribe("OpenAI/Whisper", { file: { data: audioBytes, filename: "a.mp3" } });
 const fromUrl = await client.audio.transcribeAsync("Doubao ASR 2.0", { url: "https://…/talk.mp3" }); // no upload
 // speechAsync / transcribeAsync for long jobs; voices and emotions are in getOptionsSchema(model).catalog
 
-// Video: always async.
+// Video: always async. quote() prices a call without running it (USD, what the user pays).
+const q = await client.video.quote("Seedance 2.5", { prompt: "a gentle ocean wave", duration: 15, resolution: "720p" });
 const task = await client.video.generate("MiniMax Hailuo 2.3", { prompt: "a gentle ocean wave", duration: 5 });
 const status = await client.video.wait(task.id, { pollIntervalMs: 5000 });
 if (status.status === "succeeded") await client.video.getContent(task.id);
@@ -398,7 +532,32 @@ if (status.status === "succeeded") await client.video.getContent(task.id);
 const e = await client.embeddings.create("text-embedding-3-small", { input: ["alpha", "beta"] });
 ```
 
+`client.video.quote`, `client.image.quote` and `client.audio.quoteSpeech` take the same arguments as the call and return `{ total_cost, note }`: what the signed-in user would be charged, fees included, without running it. Video is the one to quote: a 30 s 1080p Seedance clip costs dollars, and the price depends on resolution, duration and reference clips. An upscale is priced by the size it makes (Topaz: one credit per 24 MP of output), so quote it too when the source can be large.
+
+A finished video is kept for 2 hours: `status.expires_at` (Unix seconds) is when `getContent` and `video_url` stop working. If the app needs the video later, save it before then:
+
+```ts
+const { data, contentType } = await client.video.getContent(task.id);
+const saved = await client.files.put(`videos/${task.id}.mp4`, data, { contentType }); // saved.url lasts
+```
+
 `VideoGenerateParams` covers keyframes (`first_frame_url`, `last_frame_url`), reference inputs, source video, image and audio drivers, `service_tier: "flex"`, and more. Every `*_url` accepts `https://` or a `data:` URI (`encodeImageUrl(bytes)`).
+
+### Faces in Seedance references
+
+Seedance refuses a reference picture with a realistic face. For users the platform has enabled it for, `client.assets.verify(url)` puts the picture into the platform's Seedance asset library (Volcengine reviews it in a few seconds) and returns an `asset://` URI that Seedance takes in the picture's place:
+
+```ts
+const me = await client.me();                       // { id, name, features }
+if (me.features.includes("seedance_asset_verify")) {
+  const v = await client.assets.verify(pictureUrl); // https:// or data: URI
+  // { status: "active", asset: "asset://asset-…", faces: 1 }  or  { status: "no_face", faces: 0 }
+  const ref = v.status === "active" ? v.asset : pictureUrl;
+  await client.video.generate("Seedance 2.5", { prompt: "…", reference_image_urls: [ref] });
+}
+```
+
+The library keeps the pictures used lately and drops the rest, so call `verify` again right before each Seedance call (a picture still held answers at once). Errors carry a `code`: `invalid_image` (under 300 px or over 6000 px a side, or width/height outside 0.4–2.5), `feature_not_enabled`, `rejected` (Volcengine's review refused it), `busy` (429; retry after `e.retryAfter` seconds).
 
 ## Realtime voice
 
@@ -516,7 +675,7 @@ The origin must be your app's own `https://<slug>.runapps.dev` or `http://localh
 try {
   await client.chat.create({ ... }, { signal: controller.signal });
 } catch (e) {
-  if (e instanceof APIError) console.error(e.statusCode, e.type, e.message);
+  if (e instanceof APIError) console.error(e.statusCode, e.type, e.code, e.message);
   else throw e;   // network errors are the fetch rejection
 }
 ```
@@ -527,7 +686,7 @@ Every call takes `{ signal }` for cancellation.
 
 | Service | Methods |
 |---|---|
-| `client.chat` | `create`, `stream` |
+| `client.chat` | `create`, `stream`, `structured` |
 | `client.models` | `list` |
 | `client.files` | `put`, `putString`, `putFromURL`, `get`, `read`, `readJSON`, `stat`, `exists`, `list`, `del`, `deleteMany`, `move`, `copy`, `batch` |
 | `client.image` | `generate`, `edit`, `generateAsync`, `submitGenerate`, `getAsyncStatus` |
@@ -535,10 +694,15 @@ Every call takes `{ signal }` for cancellation.
 | `client.realtime` | `connect` → session: `on`, `send`, `appendAudio`, `commitAudio`, `mute`, `unmute`, `say`, `cancelResponse`, `update`, `sendFunctionResult`, `close`, `closed` |
 | `client.video` | `generate`, `getStatus`, `wait`, `getContent` |
 | `client.embeddings` | `create` |
+| `client.apps` | `receivers`, `send`, `onReceive` (→ `importTo`, `blob`, `fromApp`; option `confirm`), `waiting`, `dismiss`, `sendButton`, `offer`, `watchDownloads` |
+| `client.agent(opts)` | `prompt`, `steer`, `followUp`, `abort`, `on`, `useSkill`, `export`, `reset`; `messages`, `usage`, `busy`, `model` |
+| `client.workspace(opts)` | `list`, `read`, `readText`, `write`, `delete`, `stat`, `exists`, `mount`, `unmount`, `skills`, `skillBody`, `refreshSkills`, `clearWork`, `destroy` |
 
 Browser sign-in: `client.signIn()`, `client.signOut()`, `client.user`, `client.auth`.
 
 Sync: `client.sync.status()`, `now()`, `pause()`, `resume()`; option `sync`; events `sync:state`, `db:change`.
+
+Agents: `defineTool`, `domUI`, `nullUI`, `memoryFS`, `fileTools`, `sandboxTool`, `runInSandbox`, `askUserTool`, `parseSkill`, `collectCompletion`, `parseJSONLoose`.
 
 Helpers: `hasCapabilityTag`, `acceptsModality`, `getOptionsSchema`, `acceptsField`, `requiresField`, `allowedValuesFor`, `validateRequest`, `supportsVoiceClone`, `supportsInstructText`, `defaultVoice`, `encodeImageUrl`, `decodeMediaUrl`, `pcm16FromFloat32`, `float32FromPCM16`, `bytesToBase64`, `base64ToBytes`, `ServerTools`, and the message builders `userMessage`, `systemMessage`, `assistantMessage`, `toolResultMessage`, `userMessageParts`, `textPart`, `imagePart`, `videoPart`, `audioPart`.
 
