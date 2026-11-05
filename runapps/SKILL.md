@@ -31,6 +31,7 @@ The same key works at the gateway (`https://www.runapps.ai/v1`, OpenAI-compatibl
 | User & sign-in | Users sign in with their RunApps account inside the app (the SDK does it; `new RunApps()` with no key). Each user pays their own model usage plus the creator fee. The app never holds a key. | SDK (`references/sdk.md`) |
 | Private prompts | Prompt files the app ships but browsers never see: `.private/prompts/<id>.md` in the zip; the app sends `prompt: { id, vars }` and the gateway fills and prepends it. | `get_app` / `check_bundle` list the ids found |
 | Per-user files & sync | Each user has a file space per app (`client.files`), and an IndexedDB sync (`client.sync`) mirrors a local database into it. | SDK |
+| Public folder | What the creator keeps under `_public/` in their files for the app is readable by anyone with no token (`client.shared`): a template library, a skill list, any data the creator updates without a new bundle. One writer, many readers; a copy is the reader's own. | SDK |
 | Models | A catalogue of chat, vision, image, speech, transcription, video, embedding and realtime models; the request names the model by its catalogue name. | `list_models` |
 | Agent key | The `rk_` key you hold: `kind = agent`, scoped; listed under the user's API Keys. | `revoke_my_key` |
 
