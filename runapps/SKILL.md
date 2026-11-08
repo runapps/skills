@@ -62,13 +62,14 @@ Updates: upload a new bundle or change metadata any time; a public app stays pub
 - Every model call made with the `gateway` scope, and every call the user's app makes, costs real money. Test with short prompts and cheap models; `list_models` gives prices.
 - The key is the user's: one per machine (the `name` distinguishes them), never shared, never written anywhere but the MCP config. Revoke with `revoke_my_key` when asked to disconnect.
 - Do not invent model names; use `list_models`. An unknown name is a 400, never a silent swap.
-- A private prompt's text must stay private: the gateway withholds replies that echo it.
+- A private prompt's text must stay private: the gateway never sends it to the browser and tells the model to keep it confidential; it does not screen replies.
 
 ## Where to read next
 
 | Task | Read |
 |---|---|
 | Writing the app: sign-in, chat, streaming, images, audio, video, files, sync, private prompts, errors | `references/sdk.md` |
+| Web search and reading pages, from code (`client.web`) or by the model (`chat.create({ platformTools })`, an agent's `webTools`) | `references/sdk.md` → "Web search and reading pages" |
 | Exact tool parameters and result shapes | `references/tools.md` |
 | Connecting (full text, always current) | https://www.runapps.ai/agent/setup.md |
 | Building a bundle, publishing, earnings | `references/sdk.md` → "Build an app", "Publish it" |
